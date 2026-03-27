@@ -418,18 +418,35 @@ def main() -> None:
     for r in ctx_warning:
         print(f"      {r['date']}  {r['value']:+.3f} C  z={r['z_score']:+.2f}")
 
-    # --- Load TimesFM --------------------------------------------------------
-    print("\n  Loading TimesFM 1.0 ...")
+    # --- Load TimesFM 2.5 ----------------------------------------------------
+    print("\n  Loading TimesFM 2.5 (200M) PyTorch...")
+    import torch
     import timesfm
 
-    hparams = timesfm.TimesFmHparams(horizon_len=HORIZON)
-    checkpoint = timesfm.TimesFmCheckpoint(
-        huggingface_repo_id="google/timesfm-1.0-200m-pytorch"
-    )
-    model = timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
+    torch.set_float32_matmul_precision("high")
 
-    point_out, quant_out = model.forecast([context_values], freq=[0])
+    model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
+        "google/timesfm-2.5-200m-pytorch"
+    )
+
+    print("  Compiling model for forecasting...")
+    model.compile(
+        timesfm.ForecastConfig(
+            max_context=1024,
+            max_horizon=256,
+            normalize_inputs=True,
+            use_continuous_quantile_head=True,
+            force_flip_invariance=True,
+            infer_is_positive=False,
+            fix_quantile_crossing=True,
+        )
+    )
+
+    point_out, quant_out = model.forecast(horizon=HORIZON, inputs=[context_values])
     point_fc = point_out[0]  # shape (HORIZON,)
+    # TimesFM 2.5: quant_out shape is (1, HORIZON, 10)
+    # Index: 0=mean, 1=10%, 2=20%, ..., 9=90%
+    # Transpose to (10, HORIZON) to match rest of code's expectations
     quant_fc = quant_out[0].T  # shape (10, HORIZON)
 
     # --- Build synthetic future + Phase 2 detection --------------------------
